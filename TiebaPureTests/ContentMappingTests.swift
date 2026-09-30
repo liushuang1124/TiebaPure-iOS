@@ -134,7 +134,7 @@ final class ContentMappingTests: XCTestCase {
         XCTAssertEqual(TiebaEmoticon.displayText(for: "image_emoticon25"), "[滑稽]")
     }
 
-    func testMapsVideoAndNormalizedVoiceContent() throws {
+    func testSuppressesVideoAndMapsNormalizedVoiceContent() throws {
         var video = Tieba_PbContent()
         video.type = 5
         video.link = "https://video.example/a.mp4"
@@ -149,13 +149,14 @@ final class ContentMappingTests: XCTestCase {
         let blocks = PostMapper.blocks(from: [video, voice])
 
         XCTAssertEqual(blocks.count, 2)
-        guard case let .video(value) = blocks[0] else {
-            return XCTFail("expected video block")
+        guard case let .image(image) = blocks[0] else {
+            return XCTFail("expected the video to degrade to its still cover")
         }
-        XCTAssertEqual(value.videoURL?.absoluteString, "https://video.example/a.mp4")
-        XCTAssertEqual(value.coverURL?.absoluteString, "https://video.example/cover.jpg")
-        XCTAssertEqual(value.width, 1280)
-        XCTAssertEqual(value.height, 720)
+        XCTAssertEqual(image.thumbnailURL?.absoluteString, "https://video.example/cover.jpg")
+        XCTAssertEqual(image.originalURL?.absoluteString, "https://video.example/cover.jpg")
+        XCTAssertEqual(image.width, 1280)
+        XCTAssertEqual(image.height, 720)
+        XCTAssertFalse(blocks.contains { if case .video = $0 { return true }; return false })
         guard case let .voice(mappedVoice) = blocks[1] else {
             return XCTFail("expected voice block")
         }
@@ -252,7 +253,7 @@ final class ContentMappingTests: XCTestCase {
         XCTAssertTrue(value.showOriginalButton)
     }
 
-    func testMapsThreadSummaryWithAuthorAndVideoInfo() {
+    func testMapsThreadSummaryWithAuthorAndSuppressedVideoInfo() {
         var author = Tieba_User()
         author.id = 42
         author.name = "raw"
@@ -305,7 +306,7 @@ final class ContentMappingTests: XCTestCase {
         XCTAssertEqual(summary.firstPostID, 123)
         XCTAssertTrue(summary.isLiked)
         XCTAssertTrue(summary.isTop)
-        XCTAssertTrue(summary.hasVideo)
+        XCTAssertFalse(summary.hasVideo)
     }
 
     func testThreadSummaryMapsPersonalizedMediaListURLs() {
@@ -339,7 +340,7 @@ final class ContentMappingTests: XCTestCase {
         XCTAssertTrue(image.showOriginalButton)
     }
 
-    func testThreadSummaryDoesNotDuplicateSameVideoFromContentAndVideoInfo() {
+    func testThreadSummaryDeduplicatesStillCoverFromContentAndVideoInfo() {
         var contentVideo = Tieba_PbContent()
         contentVideo.type = 5
         contentVideo.link = "https://video.example/a.mp4"
@@ -359,19 +360,22 @@ final class ContentMappingTests: XCTestCase {
         thread.videoInfo = videoInfo
 
         let summary = ThreadMapper.fromThreadInfo(thread, usersByID: [:])
-        let videos = summary.mediaBlocks.compactMap { block -> VideoContent? in
-            if case let .video(video) = block {
-                return video
+        let covers = summary.mediaBlocks.compactMap { block -> ImageContent? in
+            if case let .image(image) = block {
+                return image
             }
             return nil
         }
 
-        XCTAssertEqual(videos.count, 1)
-        XCTAssertEqual(videos.first?.videoURL?.absoluteString, "https://video.example/a.mp4")
-        XCTAssertTrue(summary.hasVideo)
+        XCTAssertEqual(covers.count, 1)
+        XCTAssertEqual(
+            covers.first?.thumbnailURL?.absoluteString,
+            "https://video.example/cover.jpg"
+        )
+        XCTAssertFalse(summary.hasVideo)
     }
 
-    func testThreadSummaryMergesVideoInfoPlaybackURLIntoContentVideo() {
+    func testThreadSummaryKeepsStillCoverWhenContentVideoHasNoPlaybackURL() {
         var contentVideo = Tieba_PbContent()
         contentVideo.type = 5
         contentVideo.src = "https://video.example/content-cover.jpg"
@@ -390,16 +394,19 @@ final class ContentMappingTests: XCTestCase {
         thread.videoInfo = videoInfo
 
         let summary = ThreadMapper.fromThreadInfo(thread, usersByID: [:])
-        let videos = summary.mediaBlocks.compactMap { block -> VideoContent? in
-            if case let .video(video) = block {
-                return video
+        let covers = summary.mediaBlocks.compactMap { block -> ImageContent? in
+            if case let .image(image) = block {
+                return image
             }
             return nil
         }
 
-        XCTAssertEqual(videos.count, 1)
-        XCTAssertEqual(videos.first?.videoURL?.absoluteString, "https://video.example/direct.mp4")
-        XCTAssertEqual(videos.first?.coverURL?.absoluteString, "https://video.example/content-cover.jpg")
+        XCTAssertEqual(covers.count, 1)
+        XCTAssertEqual(
+            covers.first?.thumbnailURL?.absoluteString,
+            "https://video.example/content-cover.jpg"
+        )
+        XCTAssertFalse(summary.hasVideo)
     }
 
     func testThreadSummaryMergesVoiceInfoAndDeduplicatesContentVoice() throws {

@@ -480,14 +480,21 @@ private struct SearchThreadResponseDTO: Decodable {
 
         var contentBlock: ContentBlock? {
             if type == "flash" {
-                return .video(VideoContent(
-                    videoURL: highVideoURL ?? videoURL,
+                guard TiebaVideoPolicy.suppressesVideo else {
+                    return .video(VideoContent(
+                        videoURL: highVideoURL ?? videoURL,
+                        coverURL: videoCoverURL ?? bigPic ?? smallPic,
+                        webURL: nil,
+                        width: width,
+                        height: height,
+                        duration: 0
+                    ))
+                }
+                return TiebaVideoPolicy.stillCoverBlock(
                     coverURL: videoCoverURL ?? bigPic ?? smallPic,
-                    webURL: nil,
                     width: width,
-                    height: height,
-                    duration: 0
-                ))
+                    height: height
+                )
             }
 
             guard type == "pic" else { return nil }

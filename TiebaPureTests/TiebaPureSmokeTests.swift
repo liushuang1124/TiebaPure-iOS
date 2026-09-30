@@ -1237,7 +1237,7 @@ final class TiebaPureSmokeTests: XCTestCase {
         XCTAssertEqual(ForumThreadTapPolicy.destination(for: .stats), .none)
     }
 
-    func testHomeMediaActionPolicyPlaysVideoFromFeed() {
+    func testHomeMediaActionPolicyNeverPlaysVideoFromFeed() {
         let video = VideoContent(
             videoURL: URL(string: "https://video.example/a.mp4"),
             coverURL: URL(string: "https://video.example/cover.jpg"),
@@ -1255,7 +1255,7 @@ final class TiebaPureSmokeTests: XCTestCase {
             accessibilityLabel: "Thread video"
         )
 
-        XCTAssertEqual(HomeMediaActionPolicy.action(for: item), .playVideo(video))
+        XCTAssertEqual(HomeMediaActionPolicy.action(for: item), .openThread)
     }
 
     func testHomeMediaActionPolicyPreviewsImageGroupFromFeed() {
@@ -1299,12 +1299,66 @@ final class TiebaPureSmokeTests: XCTestCase {
     func testForumFeedMediaLayoutUsesStablePreviewRatios() {
         XCTAssertEqual(ForumFeedMediaLayoutPolicy.visibleItemCount(totalCount: 1), 1)
         XCTAssertEqual(ForumFeedMediaLayoutPolicy.visibleItemCount(totalCount: 5), 3)
+        // Multi-image posts keep the uniform tile grid.
         XCTAssertEqual(ForumFeedMediaLayoutPolicy.containerAspectRatio(totalCount: 1), 2)
         XCTAssertEqual(ForumFeedMediaLayoutPolicy.containerAspectRatio(totalCount: 2), 3)
-        XCTAssertEqual(ForumFeedMediaLayoutPolicy.thumbnailAspectRatio(totalCount: 1, visibleCount: 1), 2)
+        // thumbnailAspectRatio only drives compact multi-image tiles now; single
+        // images use ForumFeedMediaLayoutPolicy.containerAspectRatio(…aspectRatios:).
         XCTAssertEqual(ForumFeedMediaLayoutPolicy.thumbnailAspectRatio(totalCount: 2, visibleCount: 2), 1.5)
         XCTAssertEqual(ForumFeedMediaLayoutPolicy.thumbnailAspectRatio(totalCount: 3, visibleCount: 3), 1)
         XCTAssertTrue(ForumFeedMediaLayoutPolicy.showsMoreBadge(totalCount: 4, visibleCount: 3))
+    }
+
+    func testForumFeedSingleImageFollowsPostAspectRatio() {
+        // A single image is laid out at the post's own ratio instead of being
+        // forced into the old 2:1 slot, so the photo is not cropped.
+        XCTAssertTrue(
+            ForumFeedMediaLayoutPolicy.isSingleImageLayout(totalCount: 1, visibleCount: 1)
+        )
+        XCTAssertFalse(
+            ForumFeedMediaLayoutPolicy.isSingleImageLayout(totalCount: 4, visibleCount: 3)
+        )
+
+        func containerRatio(_ ratios: [CGFloat]) -> CGFloat {
+            ForumFeedMediaLayoutPolicy.containerAspectRatio(
+                totalCount: 1,
+                visibleCount: 1,
+                aspectRatios: ratios
+            )
+        }
+
+        // 4:3 and 16:9 photos show their true ratio.
+        XCTAssertEqual(containerRatio([4.0 / 3.0]), 4.0 / 3.0, accuracy: 0.0001)
+        XCTAssertEqual(containerRatio([16.0 / 9.0]), 16.0 / 9.0, accuracy: 0.0001)
+
+        // Very wide and very tall images are clamped instead of taking over.
+        XCTAssertEqual(containerRatio([8]), 2.4, accuracy: 0.0001)
+        XCTAssertEqual(containerRatio([0.2]), 1 / 1.5, accuracy: 0.0001)
+
+        // A missing ratio falls back to the historical single-image slot.
+        XCTAssertEqual(containerRatio([]), 2, accuracy: 0.0001)
+    }
+
+    func testForumFeedMultiImageLayoutKeepsUniformTileRatio() {
+        // Extra ratios must not change the multi-image grid.
+        XCTAssertEqual(
+            ForumFeedMediaLayoutPolicy.containerAspectRatio(
+                totalCount: 3,
+                visibleCount: 3,
+                aspectRatios: [0.4, 5.0, 1.0]
+            ),
+            3,
+            accuracy: 0.0001
+        )
+        XCTAssertEqual(
+            ForumFeedMediaLayoutPolicy.containerAspectRatio(
+                totalCount: 2,
+                visibleCount: 2,
+                aspectRatios: [16.0 / 9.0, 16.0 / 9.0]
+            ),
+            3,
+            accuracy: 0.0001
+        )
     }
 
     func testForumFeedMediaLayoutProducesBoundedContainerHeight() {
@@ -1320,6 +1374,28 @@ final class TiebaPureSmokeTests: XCTestCase {
         XCTAssertEqual(
             ForumFeedMediaLayoutPolicy.containerHeight(containerWidth: 320, totalCount: 9),
             320.0 / 3.0,
+            accuracy: 0.001
+        )
+
+        // Single image: height follows the post ratio, capped by the clamp.
+        XCTAssertEqual(
+            ForumFeedMediaLayoutPolicy.containerHeight(
+                containerWidth: 320,
+                totalCount: 1,
+                visibleCount: 1,
+                aspectRatios: [4.0 / 3.0]
+            ),
+            240,
+            accuracy: 0.001
+        )
+        XCTAssertEqual(
+            ForumFeedMediaLayoutPolicy.containerHeight(
+                containerWidth: 320,
+                totalCount: 1,
+                visibleCount: 1,
+                aspectRatios: [0.25]
+            ),
+            480,
             accuracy: 0.001
         )
     }
@@ -1745,7 +1821,17 @@ final class TiebaPureSmokeTests: XCTestCase {
             InlineImageLayoutPolicy.height(containerWidth: 320, image: wideImage),
             40
         )
-        XCTAssertEqual(ForumFeedMediaLayoutPolicy.thumbnailAspectRatio(totalCount: 1, visibleCount: 1), 2)
+        // The feed no longer pins a single tap target to the old 2:1 tile: it now
+        // follows the post ratio (clamped), so the thumbnail matches the inline
+        // layout instead of cropping the photo.
+        XCTAssertEqual(
+            ForumFeedMediaLayoutPolicy.containerAspectRatio(
+                totalCount: 1,
+                visibleCount: 1,
+                aspectRatios: [InlineImageLayoutPolicy.aspectRatio(for: wideImage)]
+            ),
+            ForumFeedMediaLayoutPolicy.maximumSingleImageAspectRatio
+        )
     }
 
     func testFullScreenImageSwipePolicySwitchesImagesWithoutDismiss() {

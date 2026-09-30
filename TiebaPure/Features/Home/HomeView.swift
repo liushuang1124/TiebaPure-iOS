@@ -779,6 +779,17 @@ enum HomeMediaAction: Equatable {
 enum HomeMediaActionPolicy {
     static func action(for item: ReaderMediaItem, in mediaItems: [ReaderMediaItem]) -> HomeMediaAction {
         if let video = item.video {
+            // Fork policy: video never plays. A tile that still carries video
+            // falls back to its still cover, then to opening the thread.
+            guard TiebaVideoPolicy.suppressesVideo == false else {
+                if let image = item.image {
+                    let images = mediaItems.compactMap(\.image)
+                    let resolvedImages = images.isEmpty ? [image] : images
+                    let index = resolvedImages.firstIndex(of: image) ?? 0
+                    return .previewImages(resolvedImages, index: index)
+                }
+                return .openThread
+            }
             return .playVideo(video)
         }
         if let image = item.image {

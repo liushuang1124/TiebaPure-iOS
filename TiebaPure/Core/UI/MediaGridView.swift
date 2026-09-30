@@ -28,7 +28,13 @@ struct ReaderMediaItem: Identifiable, Equatable, Sendable {
         self.thumbnailURL = thumbnailURL
         self.image = image
         self.video = video
-        self.aspectRatio = max(0.5, min(aspectRatio, 2.0))
+        // Clamp matches ForumFeedMediaLayoutPolicy's single-image bounds so a
+        // single photo fills its feed row exactly instead of letterboxing
+        // inside it (2.4 = widest shown, 1/1.5 = tallest shown).
+        self.aspectRatio = max(
+            1 / ForumFeedMediaLayoutPolicy.maximumSingleImageHeightRatio,
+            min(aspectRatio, ForumFeedMediaLayoutPolicy.maximumSingleImageAspectRatio)
+        )
         self.accessibilityLabel = accessibilityLabel
     }
 
@@ -77,10 +83,7 @@ struct MediaGridView: View {
             if usesCompactFeedLayout {
                 Color.clear
                     .frame(maxWidth: .infinity)
-                    .aspectRatio(
-                        ForumFeedMediaLayoutPolicy.containerAspectRatio(totalCount: totalItemCount),
-                        contentMode: .fit
-                    )
+                    .aspectRatio(compactContainerAspectRatio, contentMode: .fit)
                     .overlay {
                         HStack(spacing: TiebaPureTheme.Spacing.xs) {
                             ForEach(items) { item in
@@ -130,7 +133,6 @@ struct MediaGridView: View {
                     item: item,
                     maxHeight: usesCompactFeedLayout ? nil : maxItemHeight,
                     aspectRatioOverride: usesCompactFeedLayout ? nil : thumbnailAspectRatio,
-                    fillsAvailableSpace: usesCompactFeedLayout,
                     totalItemCount: totalItemCount,
                     destinationAccessibilityLabel: destinationAccessibilityLabel,
                     destinationAccessibilityHint: destinationAccessibilityHint,
@@ -141,7 +143,6 @@ struct MediaGridView: View {
                     item: item,
                     maxHeight: usesCompactFeedLayout ? nil : maxItemHeight,
                     aspectRatioOverride: usesCompactFeedLayout ? nil : thumbnailAspectRatio,
-                    fillsAvailableSpace: usesCompactFeedLayout,
                     retryTrigger: 0,
                     isManualLoadAuthorized: false,
                     explicitOriginalAuthorization: nil,
@@ -174,6 +175,16 @@ struct MediaGridView: View {
             visibleCount: items.count
         )
     }
+
+    /// Feed row ratio. A single image follows the post's own aspect ratio so
+    /// the photo is not cropped; multi-image posts keep the uniform tile grid.
+    private var compactContainerAspectRatio: CGFloat {
+        ForumFeedMediaLayoutPolicy.containerAspectRatio(
+            totalCount: totalItemCount,
+            visibleCount: items.count,
+            aspectRatios: items.map(\.aspectRatio)
+        )
+    }
 }
 
 private struct MediaItemButton: View {
@@ -182,7 +193,6 @@ private struct MediaItemButton: View {
     let item: ReaderMediaItem
     let maxHeight: CGFloat?
     let aspectRatioOverride: CGFloat?
-    let fillsAvailableSpace: Bool
     let totalItemCount: Int
     let destinationAccessibilityLabel: String?
     let destinationAccessibilityHint: String?
@@ -198,7 +208,6 @@ private struct MediaItemButton: View {
         item: ReaderMediaItem,
         maxHeight: CGFloat?,
         aspectRatioOverride: CGFloat?,
-        fillsAvailableSpace: Bool,
         totalItemCount: Int,
         destinationAccessibilityLabel: String?,
         destinationAccessibilityHint: String?,
@@ -207,7 +216,6 @@ private struct MediaItemButton: View {
         self.item = item
         self.maxHeight = maxHeight
         self.aspectRatioOverride = aspectRatioOverride
-        self.fillsAvailableSpace = fillsAvailableSpace
         self.totalItemCount = totalItemCount
         self.destinationAccessibilityLabel = destinationAccessibilityLabel
         self.destinationAccessibilityHint = destinationAccessibilityHint
@@ -225,7 +233,6 @@ private struct MediaItemButton: View {
                 item: item,
                 maxHeight: maxHeight,
                 aspectRatioOverride: aspectRatioOverride,
-                fillsAvailableSpace: fillsAvailableSpace,
                 retryTrigger: retryTrigger,
                 isManualLoadAuthorized: isManualLoadAuthorized,
                 explicitOriginalAuthorization: explicitFallbackAuthorization,
@@ -378,7 +385,6 @@ private struct MediaThumbnailView: View {
     let item: ReaderMediaItem
     let maxHeight: CGFloat?
     let aspectRatioOverride: CGFloat?
-    let fillsAvailableSpace: Bool
     let retryTrigger: Int
     let isManualLoadAuthorized: Bool
     let explicitOriginalAuthorization: String?
@@ -391,22 +397,14 @@ private struct MediaThumbnailView: View {
     @State private var internalLoadState: TiebaRemoteImageLoadState = .empty
 
     var body: some View {
-        Group {
-            if fillsAvailableSpace {
-                GeometryReader { proxy in
-                    thumbnailContent
-                        .frame(width: proxy.size.width, height: proxy.size.height)
-                        .clipped()
-                }
-            } else {
-                thumbnailContent
-                    .aspectRatio(aspectRatioOverride ?? item.aspectRatio, contentMode: .fit)
-                    .frame(maxHeight: maxHeight)
-            }
-        }
-        .clipped()
-        .clipShape(RoundedRectangle(cornerRadius: TiebaPureTheme.Radius.media, style: .continuous))
-        .contentShape(RoundedRectangle(cornerRadius: TiebaPureTheme.Radius.media, style: .continuous))
+        thumbnailContent
+            // aspectFit, not fill: a thumbnail now keeps its own proportions
+            // inside the tile and letterboxes against the theme surface rather
+            // than being stretched and clipped. 贴吧 likewise shows the whole
+            // photo in the feed instead of cropping it to a fixed slot.
+            .aspectRatio(aspectRatioOverride ?? item.aspectRatio, contentMode: .fit)
+            .frame(maxHeight: maxHeight)
+            .contentShape(RoundedRectangle(cornerRadius: TiebaPureTheme.Radius.media, style: .continuous))
     }
 
     private var thumbnailContent: some View {
@@ -513,11 +511,31 @@ private struct MediaThumbnailView: View {
     }
 }
 
+/// Feed thumbnail sizing, tuned to match the official 百度贴吧 client's behaviour.
+///
+/// Two cases, because 贴吧 itself treats them differently:
+///
+/// - **Single image** — shown at the post's real aspect ratio instead of being
+///   forced into a 2:1 slot. The original code stretched a 4:3 photo across a
+///   2:1 tile and clipped the overflow, which cut the top and bottom off most
+///   photos in the feed. The ratio is clamped so a very tall or very wide image
+///   cannot eat the whole screen.
+/// - **Two or more images** — a uniform grid of square tiles, the way 贴吧
+///   lays out multi-image posts. Uniform tiles keep the row aligned; each
+///   thumbnail is aspect-*fit* inside its tile so nothing is cropped.
 enum ForumFeedMediaLayoutPolicy {
+    /// Widest ratio a single image may show at (2.4:1). Wider images are
+    /// letterboxed into this so one panorama cannot become a thin sliver.
+    static let maximumSingleImageAspectRatio: CGFloat = 2.4
+    /// Tallest single image shown, as a multiple of the feed width. A 9:16
+    /// screenshot is clamped here rather than pushing the next post off screen.
+    static let maximumSingleImageHeightRatio: CGFloat = 1.5
+
     static func visibleItemCount(totalCount: Int) -> Int {
         min(max(totalCount, 0), 3)
     }
 
+    /// Uniform tile ratio for multi-image posts (square tiles, 3 across).
     static func containerAspectRatio(totalCount: Int) -> CGFloat {
         totalCount <= 1 ? 2 : 3
     }
@@ -529,6 +547,42 @@ enum ForumFeedMediaLayoutPolicy {
     static func thumbnailAspectRatio(totalCount: Int, visibleCount: Int) -> CGFloat {
         let visibleCount = max(visibleCount, 1)
         return containerAspectRatio(totalCount: totalCount) / CGFloat(visibleCount)
+    }
+
+    /// Aspect ratio of the feed row that holds `visibleCount` images.
+    ///
+    /// A single image keeps its own ratio (clamped); multi-image posts use the
+    /// uniform tile ratio so the grid stays aligned.
+    static func containerAspectRatio(
+        totalCount: Int,
+        visibleCount: Int,
+        aspectRatios: [CGFloat]
+    ) -> CGFloat {
+        guard isSingleImageLayout(totalCount: totalCount, visibleCount: visibleCount) else {
+            return containerAspectRatio(totalCount: totalCount)
+        }
+        let ratio = aspectRatios.first ?? containerAspectRatio(totalCount: totalCount)
+        return min(
+            max(ratio, 1 / maximumSingleImageHeightRatio),
+            maximumSingleImageAspectRatio
+        )
+    }
+
+    static func containerHeight(
+        containerWidth: CGFloat,
+        totalCount: Int,
+        visibleCount: Int,
+        aspectRatios: [CGFloat]
+    ) -> CGFloat {
+        containerWidth / containerAspectRatio(
+            totalCount: totalCount,
+            visibleCount: visibleCount,
+            aspectRatios: aspectRatios
+        )
+    }
+
+    static func isSingleImageLayout(totalCount: Int, visibleCount: Int) -> Bool {
+        totalCount == 1 && visibleCount == 1
     }
 
     static func showsMoreBadge(totalCount: Int, visibleCount: Int) -> Bool {

@@ -80,6 +80,34 @@ struct BlocklistSnapshot: Equatable, Sendable {
     }
 }
 
+/// Local build policy: this fork never renders video.
+///
+/// Video blocks are dropped in the domain mappers instead of at the view
+/// layer, so no feed, thread, search result or media grid ever receives one.
+/// A video that carries a still cover degrades to that image, which keeps the
+/// original aspect ratio and stays tappable in the image viewer; a video with
+/// no cover disappears entirely rather than leaving an empty card.
+enum TiebaVideoPolicy {
+    static let suppressesVideo = true
+
+    /// Returns the image block a suppressed video should degrade to, or nil
+    /// when the video has no still cover worth showing.
+    static func stillCoverBlock(
+        coverURL: URL?,
+        width: Int,
+        height: Int
+    ) -> ContentBlock? {
+        guard let coverURL else { return nil }
+        return .image(ImageContent(
+            thumbnailURL: coverURL,
+            originalURL: coverURL,
+            width: width,
+            height: height,
+            showOriginalButton: true
+        ))
+    }
+}
+
 enum TiebaContentFilter {
     // Reads happen off the main actor during mapping; the store publishes on
     // the main actor. The lock keeps both sides safe, and the first read

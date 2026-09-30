@@ -71,7 +71,9 @@ struct VideoPlayerView: View {
 
     var body: some View {
         Group {
-            if resolvedVideoURL != nil || resolvedWebURL != nil {
+            if TiebaVideoPolicy.suppressesVideo {
+                coverOnlyFallback
+            } else if resolvedVideoURL != nil || resolvedWebURL != nil {
                 Button(action: activateVideo) {
                     thumbnail
                 }
@@ -215,12 +217,45 @@ struct VideoPlayerView: View {
         .contentShape(RoundedRectangle(cornerRadius: TiebaPureTheme.Radius.media, style: .continuous))
     }
 
+    /// Fork policy: no video playback anywhere, so a `.video` block that still
+    /// reaches this view renders as a non-interactive still instead of a
+    /// playable player. Keeps the original aspect ratio and never shows the
+    /// play affordance, so a suppressed video cannot be activated.
+    private var coverOnlyFallback: some View {
+        ZStack {
+            RoundedRectangle(cornerRadius: TiebaPureTheme.Radius.media, style: .continuous)
+                .fill(TiebaPureTheme.ColorToken.readerTertiarySurface)
+
+            if let coverURL = video.coverURL {
+                GeometryReader { proxy in
+                    TiebaRemoteImage(
+                        primaryURL: coverURL,
+                        targetPixelSize: TiebaImageDecodePolicy.previewTargetPixelSize(
+                            for: proxy.size,
+                            displayScale: displayScale
+                        ),
+                        contentMode: .fill,
+                        showsProgress: true,
+                        showsRetryButton: false,
+                        showsResolvedImage: false,
+                        loadsAutomatically: mediaRequestPolicy.loadsAutomatically || isManualCoverLoadAuthorized
+                    )
+                }
+            } else {
+                placeholderIcon
+            }
+        }
+        .aspectRatio(video.aspectRatio, contentMode: .fit)
+        .clipShape(RoundedRectangle(cornerRadius: TiebaPureTheme.Radius.media, style: .continuous))
+        .allowsHitTesting(false)
+        .accessibilityLabel("视频已停用")
+    }
+
     private var placeholderIcon: some View {
         Image(systemName: "play.rectangle.fill")
             .font(.system(size: 30))
             .foregroundStyle(.secondary)
-            .accessibilityHidden(true)
-    }
+            .accessibilityHidden(true)    }
 
     private var inlineAspectRatio: CGFloat {
         max(0.5, min(CGFloat(video.aspectRatio), 2.0))

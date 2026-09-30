@@ -1,0 +1,90 @@
+name: Unsigned IPA
+
+# Builds a code-signing-free .ipa for self-signing on device
+# (全能签 / ESign / TrollStore / Sideloadly).
+#
+# This fork never renders video: see TiebaVideoPolicy in
+# TiebaPure/Domain/Filtering/TiebaContentFilter.swift.
+#
+# Output artifact: TiebaPure-unsigned.ipa
+#   Payload/TiebaPure.app  — re-signed on device, so no profile is embedded.
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - 'TiebaPure/**'
+      - 'TiebaPureOpenIn/**'
+      - 'TiebaPure.xcodeproj/**'
+      - '.github/workflows/unsigned-ipa.yml'
+
+permissions:
+  contents: read
+
+env:
+  # Must match ci.yml: the project requires this toolchain.
+  DEVELOPER_DIR: /Applications/Xcode_26.6.app/Contents/Developer
+  DERIVED_DATA: /tmp/TiebaPureIPADerivedData
+
+jobs:
+  unsigned-ipa:
+    runs-on: macos-26
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+
+      - name: Build Release for device without signing
+        run: |
+          set -o pipefail
+          xcodebuild -project TiebaPure.xcodeproj -scheme TiebaPure \
+            -configuration Release -sdk iphoneos \
+            -destination 'generic/platform=iOS' \
+            -derivedDataPath "$DERIVED_DATA" \
+            build CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY=""
+
+      - name: Assert the fork's policy is actually compiled in
+        run: |
+          APP="$DERIVED_DATA/Build/Products/Release-iphoneos/TiebaPure.app"
+          test -d "$APP"
+
+          # The 120Hz unlock this fork relies on must survive the build.
+          test "$(/usr/libexec/PlistBuddy -c 'Print :CADisableMinimumFrameDurationOnPhone' "$APP/Info.plist")" = true
+          test "$(/usr/libexec/PlistBuddy -c 'Print :MinimumOSVersion' "$APP/Info.plist")" = 16.4
+
+          # No video playback surface may be linked into the binary.
+          if otool -L "$APP/TiebaPure" | grep -qE 'AVKit\.framework|AVFoundation\.framework'; then
+            echo "::warning::AVKit/AVFoundation is still linked; video suppression is data-layer only."
+          fi
+
+      - name: Package Payload/<App>.app into an unsigned .ipa
+        run: |
+          APP_DIR="$DERIVED_DATA/Build/Products/Release-iphoneos"
+          APP_NAME="$(basename "$(find "$APP_DIR" -maxdepth 1 -name '*.app' | head -n 1)")"
+          test -n "$APP_NAME"
+
+          rm -rf /tmp/ipa-stage
+          mkdir -p /tmp/ipa-stage/Payload
+          cp -R "$APP_DIR/$APP_NAME" /tmp/ipa-stage/Payload/
+
+          # Strip signing leftovers so the on-device signer starts clean.
+          rm -rf "/tmp/ipa-stage/Payload/$APP_NAME/_CodeSignature"
+          find /tmp/ipa-stage -name 'embedded.mobileprovision' -delete
+          find /tmp/ipa-stage -name '.DS_Store' -delete
+
+          cd /tmp/ipa-stage
+          # -y keeps symlinks as symlinks; the app has no Frameworks today but
+          # this stays correct if it ever gains one.
+          zip -qry "$GITHUB_WORKSPACE/TiebaPure-unsigned.ipa" Payload
+
+          cd "$GITHUB_WORKSPACE"
+          ls -l TiebaPure-unsigned.ipa
+          unzip -l TiebaPure-unsigned.ipa | head -n 20
+
+      - name: Upload unsigned IPA
+        uses: actions/upload-artifact@v4
+        with:
+          name: TiebaPure-unsigned-ipa
+          path: TiebaPure-unsigned.ipa
+          if-no-files-found: error
+          retention-days: 14
