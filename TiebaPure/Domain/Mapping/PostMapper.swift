@@ -54,21 +54,14 @@ enum PostMapper {
             return [.mention(userID: content.uid == 0 ? nil : content.uid, text: content.text)]
         case 5:
             let size = parseSize(content.bsize, fallbackWidth: content.width, fallbackHeight: content.height)
-            guard TiebaVideoPolicy.suppressesVideo else {
-                return [.video(VideoContent(
-                    videoURL: url(firstNonEmpty(content.link)),
-                    coverURL: url(firstNonEmpty(content.src, content.cdnSrc)),
-                    webURL: url(firstNonEmpty(content.text)),
-                    width: size.width,
-                    height: size.height,
-                    duration: Int(content.duringTime)
-                ))]
-            }
-            return TiebaVideoPolicy.stillCoverBlock(
+            return [.video(VideoContent(
+                videoURL: url(firstNonEmpty(content.link)),
                 coverURL: url(firstNonEmpty(content.src, content.cdnSrc)),
+                webURL: url(firstNonEmpty(content.text)),
                 width: size.width,
-                height: size.height
-            ).map { [$0] } ?? []
+                height: size.height,
+                duration: Int(content.duringTime)
+            ))]
         case 10:
             guard let voice = VoiceContent(
                 md5: content.voiceMd5,
@@ -85,14 +78,6 @@ enum PostMapper {
     static func videoBlock(from videoInfo: Tieba_VideoInfo) -> ContentBlock? {
         guard videoInfo.videoURL.isEmpty == false || videoInfo.thumbnailURL.isEmpty == false else {
             return nil
-        }
-
-        if TiebaVideoPolicy.suppressesVideo {
-            return TiebaVideoPolicy.stillCoverBlock(
-                coverURL: url(firstNonEmpty(videoInfo.thumbnailURL)),
-                width: Int(videoInfo.videoWidth),
-                height: Int(videoInfo.videoHeight)
-            )
         }
 
         return .video(VideoContent(

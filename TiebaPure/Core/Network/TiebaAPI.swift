@@ -954,13 +954,6 @@ private struct MiniForumPageDTO: Decodable {
 
         var videoBlock: ContentBlock? {
             guard videoURL != nil || coverURL != nil else { return nil }
-            if TiebaVideoPolicy.suppressesVideo {
-                return TiebaVideoPolicy.stillCoverBlock(
-                    coverURL: coverURL,
-                    width: 16,
-                    height: 9
-                )
-            }
             return .video(VideoContent(
                 videoURL: videoURL,
                 coverURL: coverURL,

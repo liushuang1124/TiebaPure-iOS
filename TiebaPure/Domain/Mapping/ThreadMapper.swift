@@ -43,9 +43,7 @@ enum ThreadMapper {
             blocks: blocks,
             isTop: proto.isTop != 0,
             isGood: proto.isGood != 0,
-            hasVideo: TiebaVideoPolicy.suppressesVideo
-                ? false
-                : (proto.hasVideoInfo || containsVideo(in: blocks))
+            hasVideo: proto.hasVideoInfo || containsVideo(in: blocks)
         )
     }
 
@@ -72,12 +70,6 @@ enum ThreadMapper {
     }
 
     private static func mergedVideoBlock(contentBlock: ContentBlock, videoInfoBlock: ContentBlock) -> ContentBlock {
-        // With video suppressed both sides are already still covers; merging
-        // them would append a duplicate cover for the same media.
-        guard TiebaVideoPolicy.suppressesVideo == false else {
-            return contentBlock
-        }
-
         guard case let .video(contentVideo) = contentBlock,
               case let .video(infoVideo) = videoInfoBlock else {
             return contentBlock
