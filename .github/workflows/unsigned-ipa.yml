@@ -37,11 +37,32 @@ jobs:
       - name: Build Release for device without signing
         run: |
           set -o pipefail
+          # The generated project sets COPY_PHASE_STRIP=NO and
+          # DEBUG_INFORMATION_FORMAT=dwarf-with-dsym, so a plain Release build
+          # leaves the DWARF in __LINKEDIT and produces a ~25 MB binary with a
+          # ~16 MB symbol segment. Override here to ship a stripped binary
+          # (~9 MB) like the upstream release.
+          #
+          #   DEPLOYMENT_POSTPROCESSING  runs the strip phase on the product
+          #   STRIP_INSTALLED_PRODUCT    actually strips it
+          #   DEBUG_INFORMATION_FORMAT   dwarf (not dwarf-with-dsym) keeps the
+          #                              DWARF out of the shipped __LINKEDIT
+          #   STRIP_STYLE                non-global, NOT all. `all` adds -x, and
+          #                              strip then aborts with "symbols
+          #                              referenced by relocation entries that
+          #                              can't be stripped in: SwiftProtobuf.o"
+          #   ASSETCATALOG_COMPILER_OPTIMIZATION=space  shrinks the icon catalog
           xcodebuild -project TiebaPure.xcodeproj -scheme TiebaPure \
             -configuration Release -sdk iphoneos \
             -destination 'generic/platform=iOS' \
             -derivedDataPath "$DERIVED_DATA" \
-            build CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY=""
+            CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY="" \
+            DEPLOYMENT_POSTPROCESSING=YES \
+            STRIP_INSTALLED_PRODUCT=YES \
+            STRIP_STYLE=non-global \
+            DEBUG_INFORMATION_FORMAT=dwarf \
+            ASSETCATALOG_COMPILER_OPTIMIZATION=space \
+            build
 
       - name: Assert the fork's policy is actually compiled in
         run: |
@@ -55,6 +76,23 @@ jobs:
           # No video playback surface may be linked into the binary.
           if otool -L "$APP/TiebaPure" | grep -qE 'AVKit\.framework|AVFoundation\.framework'; then
             echo "::warning::AVKit/AVFoundation is still linked; video suppression is data-layer only."
+          fi
+
+      - name: Report binary size breakdown
+        run: |
+          APP="$DERIVED_DATA/Build/Products/Release-iphoneos/TiebaPure.app"
+          echo "binary total: $(stat -f '%z' "$APP/TiebaPure") bytes"
+          otool -l "$APP/TiebaPure" | awk '
+            /cmd LC_SEGMENT_64/ { inseg = 1; next }
+            inseg && /segname/ { name = $2; next }
+            inseg && /filesize/ { printf "  %-14s %s bytes\n", name, $2; inseg = 0 }
+          '
+          LINKEDIT="$(otool -l "$APP/TiebaPure" | awk '/cmd LC_SEGMENT_64/{i=1} i&&/segname __LINKEDIT/{l=1} l&&/filesize/{print $2; exit}')"
+          echo "__LINKEDIT: $LINKEDIT bytes"
+          # A stripped binary keeps __LINKEDIT small; the unstripped one was 16 MB.
+          if [ "$LINKEDIT" -gt 6000000 ]; then
+            echo "::error::__LINKEDIT is $LINKEDIT bytes - the strip overrides did not take effect."
+            exit 1
           fi
 
       - name: Package Payload/<App>.app into an unsigned .ipa

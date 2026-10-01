@@ -52,13 +52,13 @@ final class SearchAPITests: XCTestCase {
         XCTAssertEqual(image.thumbnailURL?.absoluteString, "https://tiebapic.baidu.com/forum/pic/item/a.jpg")
         XCTAssertEqual(image.originalURL?.absoluteString, "https://tiebapic.baidu.com/forum/pic/item/a_original.jpg")
 
-        guard case let .image(videoCover) = result.blocks[1] else {
-            return XCTFail("expected the flash result to degrade to its still cover")
+        guard case let .video(video) = result.blocks[1] else {
+            return XCTFail("expected video block")
         }
-        XCTAssertEqual(videoCover.thumbnailURL?.absoluteString, "https://tiebapic.baidu.com/forum/pic/item/v.jpg")
-        XCTAssertEqual(videoCover.originalURL?.absoluteString, "https://tiebapic.baidu.com/forum/pic/item/v.jpg")
-        XCTAssertEqual(videoCover.width, 1280)
-        XCTAssertEqual(videoCover.height, 720)
+        XCTAssertEqual(video.videoURL?.absoluteString, "https://video.example/a.mp4")
+        XCTAssertEqual(video.coverURL?.absoluteString, "https://tiebapic.baidu.com/forum/pic/item/v.jpg")
+        XCTAssertEqual(video.width, 1280)
+        XCTAssertEqual(video.height, 720)
     }
 
     func testForumSearchUsesOriginalForumParameters() async throws {

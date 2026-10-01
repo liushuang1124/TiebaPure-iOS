@@ -24,6 +24,12 @@ struct ThreadDetailView: View {
     private let openUserInParent: ((UserSummary) -> Void)?
     private let openForumInParent: ((Forum) -> Void)?
 
+    /// How often `scheduleInitialDestinationScrollAttempt` re-issues the
+    /// "jump to replies" scroll, and how far apart. Six attempts at 0.12s spans
+    /// roughly the time the first page needs to land and settle.
+    private static let maximumInitialDestinationScrollAttempts = 6
+    private static let initialDestinationScrollRetryInterval: Double = 0.12
+
     @State private var threadPage: ThreadPage?
     @State private var posts: [Post] = []
     @State private var nextPage = 1
@@ -51,6 +57,9 @@ struct ThreadDetailView: View {
     @State private var pendingInitialDestination: ThreadDetailInitialDestination?
     @State private var initialDestinationScrollRequest = 0
     @State private var isReplyDestinationTargetReady = false
+    /// Set once the replies header has actually been reached, so the retry chain
+    /// stops re-issuing the scroll.
+    @State private var didReachInitialDestination = false
     @State private var requestGeneration = 0
     @State private var loadTask: Task<ThreadPage, Error>?
     @State private var showsInlineRefreshAnimation = false
@@ -413,6 +422,7 @@ struct ThreadDetailView: View {
         showsInlineRefreshAnimation = false
         pendingInitialPostID = initialPostID
         pendingInitialDestination = initialDestination
+        didReachInitialDestination = false
         savedReadingPosition = nil
         didResolveSavedReadingPosition = false
         isResumingReadingPosition = false
@@ -613,7 +623,11 @@ struct ThreadDetailView: View {
             .id(ThreadDetailScrollTarget.replies)
             .onAppear {
                 isReplyDestinationTargetReady = true
-                requestInitialDestinationScrollIfReady()
+                // This bar is the real anchor for the jump, but it only appears
+                // once the list is already near the replies. Resuming the retry
+                // chain here covers the case where the ScrollView materialized
+                // before the header existed, so the scroll still lands.
+                scheduleInitialDestinationScrollAttempt()
             }
             .onDisappear {
                 isReplyDestinationTargetReady = false
@@ -1251,7 +1265,7 @@ struct ThreadDetailView: View {
                 performInitialDestinationScroll(proxy: scrollProxy)
             }
             .onAppear {
-                requestInitialDestinationScrollIfReady()
+                scheduleInitialDestinationScrollAttempt()
                 // The auto-restore request is issued while the loading state
                 // is still on screen, so this scroll view first materializes
                 // with the request already set — onChange never observes that
@@ -1500,16 +1514,40 @@ struct ThreadDetailView: View {
         scrollRequest = ThreadPostScrollRequest(id: UUID(), postID: postID)
     }
 
-    private func requestInitialDestinationScrollIfReady() {
+    /// Drives the deep-link scroll without waiting on
+    /// `isReplyDestinationTargetReady`.
+    ///
+    /// The reply control bar carries the `replies` scroll ID, but it lives in the
+    /// header of a lazily built Section: it does not exist until the list has
+    /// already scrolled near it, so gating the scroll on its `onAppear` can never
+    /// be satisfied — the jump silently never happened. Instead, re-issue the
+    /// scroll on a short timer and stop once the target has been reached, which
+    /// covers the first page still arriving and the main post's height settling.
+    private func scheduleInitialDestinationScrollAttempt() {
         guard pendingInitialDestination == .replies,
-              isReplyDestinationTargetReady else { return }
+              didReachInitialDestination == false else { return }
+        for attempt in 0..<Self.maximumInitialDestinationScrollAttempts {
+            let delay = Self.initialDestinationScrollRetryInterval * Double(attempt)
+            DispatchQueue.main.asyncAfter(deadline: .now() + delay) {
+                requestInitialDestinationScrollIfPending()
+            }
+        }
+    }
+
+    /// Keeps asking for the scroll only while the target has not been reached.
+    /// `isReplyDestinationTargetReady` turning true means the jump succeeded.
+    private func requestInitialDestinationScrollIfPending() {
+        guard pendingInitialDestination == .replies,
+              didReachInitialDestination == false else { return }
+        if isReplyDestinationTargetReady {
+            didReachInitialDestination = true
+            return
+        }
         initialDestinationScrollRequest &+= 1
     }
 
     private func performInitialDestinationScroll(proxy: ScrollViewProxy) {
-        guard pendingInitialDestination == .replies,
-              isReplyDestinationTargetReady else { return }
-        pendingInitialDestination = nil
+        guard pendingInitialDestination == .replies else { return }
         proxy.scrollTo(ThreadDetailScrollTarget.replies, anchor: .top)
     }
 

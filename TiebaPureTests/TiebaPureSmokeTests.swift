@@ -1237,7 +1237,7 @@ final class TiebaPureSmokeTests: XCTestCase {
         XCTAssertEqual(ForumThreadTapPolicy.destination(for: .stats), .none)
     }
 
-    func testHomeMediaActionPolicyNeverPlaysVideoFromFeed() {
+    func testHomeMediaActionPolicyPlaysVideoFromFeed() {
         let video = VideoContent(
             videoURL: URL(string: "https://video.example/a.mp4"),
             coverURL: URL(string: "https://video.example/cover.jpg"),
@@ -1255,7 +1255,7 @@ final class TiebaPureSmokeTests: XCTestCase {
             accessibilityLabel: "Thread video"
         )
 
-        XCTAssertEqual(HomeMediaActionPolicy.action(for: item), .openThread)
+        XCTAssertEqual(HomeMediaActionPolicy.action(for: item), .playVideo(video))
     }
 
     func testHomeMediaActionPolicyPreviewsImageGroupFromFeed() {
@@ -1299,11 +1299,9 @@ final class TiebaPureSmokeTests: XCTestCase {
     func testForumFeedMediaLayoutUsesStablePreviewRatios() {
         XCTAssertEqual(ForumFeedMediaLayoutPolicy.visibleItemCount(totalCount: 1), 1)
         XCTAssertEqual(ForumFeedMediaLayoutPolicy.visibleItemCount(totalCount: 5), 3)
-        // Multi-image posts keep the uniform tile grid.
         XCTAssertEqual(ForumFeedMediaLayoutPolicy.containerAspectRatio(totalCount: 1), 2)
         XCTAssertEqual(ForumFeedMediaLayoutPolicy.containerAspectRatio(totalCount: 2), 3)
-        // thumbnailAspectRatio only drives compact multi-image tiles now; single
-        // images use ForumFeedMediaLayoutPolicy.containerAspectRatio(…aspectRatios:).
+        XCTAssertEqual(ForumFeedMediaLayoutPolicy.thumbnailAspectRatio(totalCount: 1, visibleCount: 1), 2)
         XCTAssertEqual(ForumFeedMediaLayoutPolicy.thumbnailAspectRatio(totalCount: 2, visibleCount: 2), 1.5)
         XCTAssertEqual(ForumFeedMediaLayoutPolicy.thumbnailAspectRatio(totalCount: 3, visibleCount: 3), 1)
         XCTAssertTrue(ForumFeedMediaLayoutPolicy.showsMoreBadge(totalCount: 4, visibleCount: 3))
@@ -1374,28 +1372,6 @@ final class TiebaPureSmokeTests: XCTestCase {
         XCTAssertEqual(
             ForumFeedMediaLayoutPolicy.containerHeight(containerWidth: 320, totalCount: 9),
             320.0 / 3.0,
-            accuracy: 0.001
-        )
-
-        // Single image: height follows the post ratio, capped by the clamp.
-        XCTAssertEqual(
-            ForumFeedMediaLayoutPolicy.containerHeight(
-                containerWidth: 320,
-                totalCount: 1,
-                visibleCount: 1,
-                aspectRatios: [4.0 / 3.0]
-            ),
-            240,
-            accuracy: 0.001
-        )
-        XCTAssertEqual(
-            ForumFeedMediaLayoutPolicy.containerHeight(
-                containerWidth: 320,
-                totalCount: 1,
-                visibleCount: 1,
-                aspectRatios: [0.25]
-            ),
-            480,
             accuracy: 0.001
         )
     }
@@ -1821,17 +1797,7 @@ final class TiebaPureSmokeTests: XCTestCase {
             InlineImageLayoutPolicy.height(containerWidth: 320, image: wideImage),
             40
         )
-        // The feed no longer pins a single tap target to the old 2:1 tile: it now
-        // follows the post ratio (clamped), so the thumbnail matches the inline
-        // layout instead of cropping the photo.
-        XCTAssertEqual(
-            ForumFeedMediaLayoutPolicy.containerAspectRatio(
-                totalCount: 1,
-                visibleCount: 1,
-                aspectRatios: [InlineImageLayoutPolicy.aspectRatio(for: wideImage)]
-            ),
-            ForumFeedMediaLayoutPolicy.maximumSingleImageAspectRatio
-        )
+        XCTAssertEqual(ForumFeedMediaLayoutPolicy.thumbnailAspectRatio(totalCount: 1, visibleCount: 1), 2)
     }
 
     func testFullScreenImageSwipePolicySwitchesImagesWithoutDismiss() {

@@ -1,3 +1,1 @@
-* text=auto eol=lf
-*.png binary
-*.car binary
+LICENSES/SwiftProtobuf-Apache-2.0.txt -whitespace
